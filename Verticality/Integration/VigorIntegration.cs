@@ -26,7 +26,10 @@ namespace Verticality.Integration
         private const string NETWORK_CHANNEL = "verticality:vigor";
         
         #region Shared
-        // No longer caching API reference to ensure we always get the correct context-specific instance
+        // Cache API references by context (client/server) to reduce lookup overhead and logging
+        private static object _clientApiCache = null;
+        private static object _serverApiCache = null;
+        private static bool _apiLookupAttempted = false;
         
         /// <summary>
         /// Register the network channel in the shared Start method
@@ -52,25 +55,45 @@ namespace Verticality.Integration
         
         /// <summary>
         /// Gets the appropriate Vigor API instance based on the current context
+        /// Uses cached references after first successful lookup
         /// </summary>
         public static dynamic GetVigorAPI(ICoreAPI api)
         {
             // Early return if Vigor isn't enabled
             if (!IsVigorEnabled(api))
                 return null;
-                
+            
+            // Return cached API reference if available
+            if (api.Side == EnumAppSide.Client && _clientApiCache != null)
+            {
+                return _clientApiCache;
+            }
+            else if (api.Side == EnumAppSide.Server && _serverApiCache != null)
+            {
+                return _serverApiCache;
+            }
+            
+            // Only log once per session that we're looking up the API
+            bool firstLookup = !_apiLookupAttempted;
+            _apiLookupAttempted = true;
+            
+            if (firstLookup)
+            {
+                api.Logger.Event("[Verticality:VigorIntegration] First-time Vigor API lookup");
+            }
+            
             try
             {
                 // Get the VigorModSystem using string-based approach
                 var vigorModSystem = api.ModLoader.GetModSystem("Vigor.VigorModSystem");
                 if (vigorModSystem == null)
                 {
-                    api.Logger.Warning("[Verticality:VigorIntegration] VigorModSystem not found via GetModSystem(\"Vigor.VigorModSystem\")");
+                    if (firstLookup) api.Logger.Warning("[Verticality:VigorIntegration] VigorModSystem not found via GetModSystem(\"Vigor.VigorModSystem\")");
                     return null;
                 }
                 
-                // Log the type for debugging
-                api.Logger.Event("[Verticality:VigorIntegration] Found VigorModSystem, type: {0}", vigorModSystem.GetType().FullName);
+                // Log the type only on first lookup
+                if (firstLookup) api.Logger.Debug("[Verticality:VigorIntegration] Found VigorModSystem, type: {0}", vigorModSystem.GetType().FullName);
                 
                 // Determine which API instance to use based on the context
                 string apiPropertyName;
@@ -78,25 +101,25 @@ namespace Verticality.Integration
                 if (api.Side == EnumAppSide.Server)
                 {
                     apiPropertyName = "ServerAPI";
-                    api.Logger.Event("[Verticality:VigorIntegration] Server context detected, using ServerAPI");
+                    if (firstLookup) api.Logger.Debug("[Verticality:VigorIntegration] Server context detected, using ServerAPI");
                 }
                 else if (api.Side == EnumAppSide.Client)
                 {
                     apiPropertyName = "ClientAPI";
-                    api.Logger.Event("[Verticality:VigorIntegration] Client context detected, using ClientAPI");
+                    if (firstLookup) api.Logger.Debug("[Verticality:VigorIntegration] Client context detected, using ClientAPI");
                 }
                 else
                 {
                     // Fallback to general API if side is unknown (should never happen)
                     apiPropertyName = "API";
-                    api.Logger.Warning("[Verticality:VigorIntegration] Unknown API side, using general API (not recommended)");
+                    if (firstLookup) api.Logger.Warning("[Verticality:VigorIntegration] Unknown API side, using general API (not recommended)");
                 }
                 
                 // Get the appropriate API property via reflection
                 var apiProperty = vigorModSystem.GetType().GetProperty(apiPropertyName);
                 if (apiProperty == null)
                 {
-                    api.Logger.Warning("[Verticality:VigorIntegration] {0} property not found on VigorModSystem", apiPropertyName);
+                    if (firstLookup) api.Logger.Warning("[Verticality:VigorIntegration] {0} property not found on VigorModSystem", apiPropertyName);
                     return null;
                 }
                 
@@ -104,11 +127,22 @@ namespace Verticality.Integration
                 var vigorApi = apiProperty.GetValue(vigorModSystem);
                 if (vigorApi == null)
                 {
-                    api.Logger.Warning("[Verticality:VigorIntegration] {0} property exists but value is null", apiPropertyName);
+                    if (firstLookup) api.Logger.Warning("[Verticality:VigorIntegration] {0} property exists but value is null", apiPropertyName);
                     return null;
                 }
                 
-                api.Logger.Event("[Verticality:VigorIntegration] Successfully retrieved {0} from VigorModSystem", apiPropertyName);
+                // Cache the API reference by context
+                if (api.Side == EnumAppSide.Client)
+                {
+                    _clientApiCache = vigorApi;
+                    if (firstLookup) api.Logger.Event("[Verticality:VigorIntegration] Successfully cached client-side API reference");
+                }
+                else if (api.Side == EnumAppSide.Server)
+                {
+                    _serverApiCache = vigorApi;
+                    if (firstLookup) api.Logger.Event("[Verticality:VigorIntegration] Successfully cached server-side API reference");
+                }
+                
                 return vigorApi;
             }
             catch (Exception ex)

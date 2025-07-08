@@ -52,10 +52,8 @@ namespace Verticality.Moves.ChargedJump
 
             ICoreClientAPI capi = player.Api as ICoreClientAPI;
 
-            // Don't allow charged jumps if exhausted
-            bool canChargeJump = !VigorIntegration.IsExhausted(player);
-
-            if (player.Controls.Sneak && player.OnGround && canChargeJump)
+            // Only check basic conditions for initiating a charged jump - exhaustion check moved to jump execution
+            if (player.Controls.Sneak && player.OnGround)
             {
                 if (capi.Input.IsHotKeyPressed("jump"))
                 {
@@ -92,6 +90,15 @@ namespace Verticality.Moves.ChargedJump
                         
                         // Explicitly clamp the stamina cost to match the same scale as the jump force
                         float staminaCost = GameMath.Clamp(GameMath.Lerp(staminaCostBase, staminaCostMax, chargePercent), staminaCostBase, staminaCostMax);
+                        
+                        // Check if player is exhausted before attempting jump
+                        bool isExhausted = VigorIntegration.IsExhausted(player);
+                        if (isExhausted)
+                        {
+                            capi.Logger.Event("[Verticality:ChargedJump] Jump prevented due to exhaustion");
+                            t = 0;
+                            return;
+                        }
                         
                         // Debug logging
                         capi.Logger.Event("[Verticality:ChargedJump] Attempting charged jump with {0:F1}% charge, {1:F2} stamina cost",
