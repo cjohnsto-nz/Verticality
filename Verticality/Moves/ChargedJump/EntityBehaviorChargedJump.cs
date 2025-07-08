@@ -72,18 +72,22 @@ namespace Verticality.Moves.ChargedJump
                 {
                     if (t > 0.1f)
                     {
-                        // Calculate jump force based on charge time
-                        float actualJumpForce = GameMath.Clamp(GameMath.Lerp(0, jumpForce, t / jumpChargeTime), 0, jumpForce);
+                        // Calculate charge percentage (0.0 - 1.0), clamped to prevent overcharging
+                        float chargePercent = GameMath.Clamp(t / jumpChargeTime, 0f, 1f);
                         
-                        // Calculate stamina cost proportional to the jump force
-                        // Base cost is 5.0, scaling up to 20.0 for a fully charged jump
-                        float staminaCostBase = 5.0f; // Base cost
-                        float staminaCostMax = 20.0f; // Max cost for fully charged jump
-                        float staminaCost = GameMath.Lerp(staminaCostBase, staminaCostMax, t / jumpChargeTime);
+                        // Calculate jump force based on charge time, with explicit clamp
+                        float actualJumpForce = GameMath.Clamp(GameMath.Lerp(0, jumpForce, chargePercent), 0, jumpForce);
+                        
+                        // Calculate stamina cost proportional to the jump force, using config values
+                        float staminaCostBase = VerticalityModSystem.Config.modConfig.chargedJumpStaminaCostBase;
+                        float staminaCostMax = VerticalityModSystem.Config.modConfig.chargedJumpStaminaCostMax;
+                        
+                        // Explicitly clamp the stamina cost to match the same scale as the jump force
+                        float staminaCost = GameMath.Clamp(GameMath.Lerp(staminaCostBase, staminaCostMax, chargePercent), staminaCostBase, staminaCostMax);
                         
                         // Debug logging
                         capi.Logger.Event("[Verticality:ChargedJump] Attempting charged jump with {0:F1}% charge, {1:F2} stamina cost",
-                            100 * t / jumpChargeTime, staminaCost);
+                            100 * chargePercent, staminaCost);
                         
                         // Only do the jump if we have enough stamina
                         // The network-aware VigorIntegration will handle client-server communication
