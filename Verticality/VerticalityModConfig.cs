@@ -1,4 +1,5 @@
 using ProtoBuf;
+using Verticality.Integration;
 
 namespace Verticality
 {
@@ -15,9 +16,8 @@ namespace Verticality
         public float chargedJumpChargeTime = 0.5f;
         public float chargedJumpAddForce = 1.9f;
         
-        // Vigor integration - stamina costs
-        public float chargedJumpStaminaCostBase = 0.0f;  // Base stamina cost for minimal charged jump
-        public float chargedJumpStaminaCostMax = 30.0f;  // Maximum stamina cost for fully charged jump
+        // Vigor integration settings
+        public VigorIntegrationConfig VigorConfig = new VigorIntegrationConfig();
 
         public float crawlSpeedReduction = -0.8f;
     }

@@ -78,9 +78,17 @@ namespace Verticality.Moves.ChargedJump
                         // Calculate jump force based on charge time, with explicit clamp
                         float actualJumpForce = GameMath.Clamp(GameMath.Lerp(0, jumpForce, chargePercent), 0, jumpForce);
                         
-                        // Calculate stamina cost proportional to the jump force, using config values
-                        float staminaCostBase = VerticalityModSystem.Config.modConfig.chargedJumpStaminaCostBase;
-                        float staminaCostMax = VerticalityModSystem.Config.modConfig.chargedJumpStaminaCostMax;
+                        // Calculate stamina cost proportional to the jump force, using Vigor integration config values
+                        float staminaCostBase = VerticalityModSystem.Config.modConfig.VigorConfig.ChargedJumpStaminaCostBase;
+                        float staminaCostMax = VerticalityModSystem.Config.modConfig.VigorConfig.ChargedJumpStaminaCostMax;
+                        
+                        // Skip stamina consumption if disabled in config
+                        if (!VerticalityModSystem.Config.modConfig.VigorConfig.EnableStaminaCosts)
+                        {
+                            capi.Logger.Event("[Verticality:ChargedJump] Stamina costs disabled in config, allowing jump");
+                            player.Pos.Motion.Y += actualJumpForce;
+                            return;
+                        }
                         
                         // Explicitly clamp the stamina cost to match the same scale as the jump force
                         float staminaCost = GameMath.Clamp(GameMath.Lerp(staminaCostBase, staminaCostMax, chargePercent), staminaCostBase, staminaCostMax);

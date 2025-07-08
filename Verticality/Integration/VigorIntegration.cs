@@ -362,15 +362,30 @@ namespace Verticality.Integration
         /// <returns>True if stamina was drained successfully</returns>
         public static bool DrainStamina(EntityPlayer player, float amountPerSecond, float deltaTime)
         {
+            // Check if stamina costs are enabled in config
+            if (!VerticalityModSystem.Config.modConfig.VigorConfig.EnableStaminaCosts)
+            {
+                return true; // Allow action if stamina costs are disabled
+            }
+            
             var api = VigorIntegrationSystem.GetVigorAPI(player.Api);
             if (api == null) return true; // Allow action if Vigor not enabled
             
             try
             {
+                // Adjust the drain amount if it's from climbing (using config value)
+                if (amountPerSecond == 0 && VerticalityModSystem.Config.modConfig.VigorConfig.ClimbStaminaCostPerSecond > 0)
+                {
+                    // Use the configured value for climbing stamina cost
+                    amountPerSecond = VerticalityModSystem.Config.modConfig.VigorConfig.ClimbStaminaCostPerSecond;
+                    player.Api.Logger.Debug("[Verticality:VigorIntegration] Using configured climb stamina cost: {0}/sec", amountPerSecond);
+                }
+                
                 return api.DrainStamina(player, amountPerSecond, deltaTime);
             }
-            catch
+            catch (Exception ex)
             {
+                player.Api.Logger.Warning("[Verticality:VigorIntegration] Error draining stamina: {0}", ex.ToString());
                 return true; // Allow action if API call fails
             }
         }
