@@ -1,4 +1,5 @@
-﻿using ProtoBuf;
+using ProtoBuf;
+using Verticality.Integration;
 
 namespace Verticality
 {
@@ -14,6 +15,9 @@ namespace Verticality
 
         public float chargedJumpChargeTime = 0.5f;
         public float chargedJumpAddForce = 1.9f;
+        
+        // Vigor integration settings
+        public VigorIntegrationConfig VigorConfig = new VigorIntegrationConfig();
 
         public float crawlSpeedReduction = -0.8f;
     }

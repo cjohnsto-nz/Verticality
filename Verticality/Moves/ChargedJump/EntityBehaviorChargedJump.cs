@@ -1,4 +1,5 @@
-﻿using System;
+using System;
+using Verticality.Integration;
 using Verticality.Lib;
 using Vintagestory.API.Client;
 using Vintagestory.API.Common;
@@ -51,17 +52,69 @@ namespace Verticality.Moves.ChargedJump
 
             ICoreClientAPI capi = player.Api as ICoreClientAPI;
 
+            // Only check basic conditions for initiating a charged jump - exhaustion check moved to jump execution
             if (player.Controls.Sneak && player.OnGround)
             {
                 if (capi.Input.IsHotKeyPressed("jump"))
                 {
                     t += dt;
+                    
+                    // Add some visual feedback about charging
+                    if (t > 0.1f)
+                    {
+                        float chargePercent = Math.Min(1.0f, t / jumpChargeTime);
+                        // Could add particle effects or other visual indicators based on chargePercent
+                    }
                 }
                 else
                 {
                     if (t > 0.1f)
                     {
-                        player.Pos.Motion.Y += GameMath.Clamp(GameMath.Lerp(0, jumpForce, t / jumpChargeTime), 0, jumpForce);
+                        // Calculate charge percentage (0.0 - 1.0), clamped to prevent overcharging
+                        float chargePercent = GameMath.Clamp(t / jumpChargeTime, 0f, 1f);
+                        
+                        // Calculate jump force based on charge time, with explicit clamp
+                        float actualJumpForce = GameMath.Clamp(GameMath.Lerp(0, jumpForce, chargePercent), 0, jumpForce);
+                        
+                        // Calculate stamina cost proportional to the jump force, using Vigor integration config values
+                        float staminaCostBase = VerticalityModSystem.Config.modConfig.VigorConfig.ChargedJumpStaminaCostBase;
+                        float staminaCostMax = VerticalityModSystem.Config.modConfig.VigorConfig.ChargedJumpStaminaCostMax;
+                        
+                        // Skip stamina consumption if disabled in config
+                        if (!VerticalityModSystem.Config.modConfig.VigorConfig.EnableStaminaCosts)
+                        {
+                            capi.Logger.Event("[Verticality:ChargedJump] Stamina costs disabled in config, allowing jump");
+                            player.Pos.Motion.Y += actualJumpForce;
+                            return;
+                        }
+                        
+                        // Explicitly clamp the stamina cost to match the same scale as the jump force
+                        float staminaCost = GameMath.Clamp(GameMath.Lerp(staminaCostBase, staminaCostMax, chargePercent), staminaCostBase, staminaCostMax);
+                        
+                        // Check if player is exhausted before attempting jump
+                        bool isExhausted = VigorIntegration.IsExhausted(player);
+                        if (isExhausted)
+                        {
+                            capi.Logger.Event("[Verticality:ChargedJump] Jump prevented due to exhaustion");
+                            t = 0;
+                            return;
+                        }
+                        
+                        // Debug logging
+                        capi.Logger.Event("[Verticality:ChargedJump] Attempting charged jump with {0:F1}% charge, {1:F2} stamina cost",
+                            100 * chargePercent, staminaCost);
+                        
+                        // Only do the jump if we have enough stamina
+                        // The network-aware VigorIntegration will handle client-server communication
+                        if (VigorIntegration.ConsumeStamina(player, staminaCost))
+                        {
+                            player.Pos.Motion.Y += actualJumpForce;
+                            capi.Logger.Event("[Verticality:ChargedJump] Jump executed with force {0:F2}", actualJumpForce);
+                        }
+                        else
+                        {
+                            capi.Logger.Event("[Verticality:ChargedJump] Jump prevented due to stamina check");
+                        }
                     }
                     t = 0;
                 }

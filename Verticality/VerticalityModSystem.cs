@@ -1,5 +1,6 @@
-﻿using HarmonyLib;
+using HarmonyLib;
 using System;
+using Verticality.Integration;
 using Verticality.Lib;
 using Verticality.Moves.ChargedJump;
 using Verticality.Moves.Climb;
@@ -52,6 +53,9 @@ namespace Verticality
             api.RegisterEntityBehaviorClass("crawl", typeof(EntityBehaviorCrawl));
 
             Config = new ConfigManager(api, "verticality.json", "verticality");
+            
+            // Vigor integration is now handled via the VigorIntegrationSystem ModSystem
+            // No initialization needed here as ModSystems auto-register
 
             api.Network.RegisterChannel(crawlNetChannel)
                 .RegisterMessageType<IsCrawlingPacket>();

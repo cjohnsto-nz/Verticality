@@ -1,4 +1,4 @@
-﻿using ProtoBuf;
+using ProtoBuf;
 using Vintagestory.API.Client;
 using Vintagestory.API.Common;
 using Vintagestory.API.Server;
@@ -73,6 +73,10 @@ namespace Verticality.Lib
 
         public void Reload()
         {
+            // Check for Vigor mod integration
+            bool vigorModPresent = api.ModLoader.IsModEnabled("vigor");
+            api.Logger.Event("[{0}] Vigor mod integration: {1}", new object[] { NetChannel, vigorModPresent ? "Enabled" : "Disabled" });
+            
             switch (api.Side)
             {
                 case (EnumAppSide.Client):
