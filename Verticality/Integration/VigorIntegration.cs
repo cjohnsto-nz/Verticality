@@ -19,6 +19,22 @@ namespace Verticality.Integration
     }
     
     /// <summary>
+    /// Network packet for server-side continuous drain start/stop
+    /// </summary>
+    [ProtoContract]
+    public class StaminaDrainPacket
+    {
+        [ProtoMember(1)]
+        public string ActionId { get; set; }
+        
+        [ProtoMember(2)]
+        public float AmountPerSecond { get; set; }
+        
+        [ProtoMember(3)]
+        public bool IsStarting { get; set; } // true = start, false = stop
+    }
+    
+    /// <summary>
     /// Integration with Vigor API for stamina consumption
     /// </summary>
     public class VigorIntegrationSystem : ModSystem
@@ -40,9 +56,10 @@ namespace Verticality.Integration
             
             // Only register the channel and message types here (shared between client/server)
             api.Network.RegisterChannel(NETWORK_CHANNEL)
-                .RegisterMessageType<StaminaConsumptionPacket>();
+                .RegisterMessageType<StaminaConsumptionPacket>()
+                .RegisterMessageType<StaminaDrainPacket>();
             
-            api.Logger.Event("[Verticality:VigorIntegration] Base network channel registered");
+            api.Logger.Event("[Verticality:VigorIntegration] Base network channel registered with all packet types");
         }
         
         /// <summary>
@@ -164,11 +181,12 @@ namespace Verticality.Integration
             // Don't cache the API reference to ensure we always get the correct instance
             this.sapi = api;
             
-            // Get the channel and register the server-side message handler
+            // Get the channel and register the server-side message handlers
             serverChannel = api.Network.GetChannel(NETWORK_CHANNEL);
             serverChannel.SetMessageHandler<StaminaConsumptionPacket>(OnServerStaminaRequest);
+            serverChannel.SetMessageHandler<StaminaDrainPacket>(OnServerStaminaDrainRequest);
             
-            api.Logger.Event("[Verticality:VigorIntegration] SERVER: Registered message handler for server-side stamina consumption");
+            api.Logger.Event("[Verticality:VigorIntegration] Server network handlers registered for stamina consumption and drain");
         }
         
         /// <summary>
@@ -182,6 +200,47 @@ namespace Verticality.Integration
             // Execute the actual stamina consumption on the server side
             bool success = ConsumeStaminaOnServer(fromPlayer.Entity as EntityPlayer, packet.Amount);
             sapi.Logger.Event("[Verticality:VigorIntegration] SERVER HANDLER: Stamina consumption result: {0}", success ? "SUCCESS" : "FAILED");
+        }
+        
+        /// <summary>
+        /// Server-side handler for continuous stamina drain requests
+        /// </summary>
+        private void OnServerStaminaDrainRequest(IServerPlayer fromPlayer, StaminaDrainPacket packet)
+        {
+            var player = fromPlayer.Entity as EntityPlayer;
+            if (player == null) return;
+            
+            sapi.Logger.Event("[Verticality:VigorIntegration] SERVER HANDLER: Received {0} drain request from {1} for action '{2}' at rate {3}/sec", 
+                packet.IsStarting ? "START" : "STOP", fromPlayer.PlayerName, packet.ActionId, packet.AmountPerSecond);
+            
+            // Get server-side API (direct access)
+            var api = VigorIntegrationSystem.GetVigorAPI(sapi);
+            if (api == null)
+            {
+                sapi.Logger.Warning("[Verticality:VigorIntegration] SERVER DRAIN: Could not get Vigor API, ignoring drain request");
+                return;
+            }
+            
+            try
+            {
+                if (packet.IsStarting)
+                {
+                    // Start drain on server directly
+                    bool success = api.StartStaminaDrain(player, packet.ActionId, packet.AmountPerSecond);
+                    sapi.Logger.Event("[Verticality:VigorIntegration] SERVER DRAIN: Started drain '{0}' result: {1}", 
+                        packet.ActionId, success ? "SUCCESS" : "FAILED");
+                }
+                else
+                {
+                    // Stop drain on server directly
+                    api.StopStaminaDrain(player, packet.ActionId);
+                    sapi.Logger.Event("[Verticality:VigorIntegration] SERVER DRAIN: Stopped drain '{0}'", packet.ActionId);
+                }
+            }
+            catch (Exception ex)
+            {
+                sapi.Logger.Error("[Verticality:VigorIntegration] SERVER DRAIN: Error handling drain request: {0}", ex.ToString());
+            }
         }
         
         /// <summary>
@@ -420,6 +479,148 @@ namespace Verticality.Integration
             catch (Exception ex)
             {
                 player.Api.Logger.Warning("[Verticality:VigorIntegration] Error draining stamina: {0}", ex.ToString());
+                return true; // Allow action if API call fails
+            }
+        }
+        
+        /// <summary>
+        /// Starts a continuous stamina drain for a specific action
+        /// </summary>
+        /// <param name="player">The player</param>
+        /// <param name="actionId">Unique identifier for the action causing the drain</param>
+        /// <param name="amountPerSecond">Drain amount per second</param>
+        /// <returns>True if the drain was started successfully</returns>
+        public static bool StartStaminaDrain(EntityPlayer player, string actionId, float amountPerSecond)
+        {
+            // Check if stamina costs are enabled in config
+            if (!VerticalityModSystem.Config.modConfig.VigorConfig.EnableStaminaCosts)
+            {
+                return true; // Allow action if stamina costs are disabled
+            }
+            
+            // For debug logging only
+            var api = VigorIntegrationSystem.GetVigorAPI(player.Api);
+            if (api == null) return true; // Allow action if Vigor not enabled
+            
+            // Adjust the drain amount if it's from climbing (using config value)
+            if (actionId == "climb" && VerticalityModSystem.Config.modConfig.VigorConfig.ClimbStaminaCostPerSecond > 0)
+            {
+                // Use the configured value for climbing stamina cost
+                amountPerSecond = VerticalityModSystem.Config.modConfig.VigorConfig.ClimbStaminaCostPerSecond;
+                player.Api.Logger.Debug("[Verticality:VigorIntegration] Using configured climb stamina cost: {0}/sec", amountPerSecond);
+            }
+            
+            try
+            {
+                // Use direct server network approach instead of API call
+                if (player.Api.Side == EnumAppSide.Client)
+                {
+                    player.Api.Logger.Event("[Verticality:Climb] Sending direct START drain request to server for '{0}' at {1}/sec", 
+                        actionId, amountPerSecond);
+                    
+                    // Get client network channel
+                    var clientApi = player.Api as ICoreClientAPI;
+                    if (clientApi != null)
+                    {
+                        var channel = clientApi.Network.GetChannel("verticality:vigor");
+                        if (channel != null)
+                        {
+                            // Send direct network packet to server
+                            channel.SendPacket(new StaminaDrainPacket {
+                                ActionId = "verticality:" + actionId,
+                                AmountPerSecond = amountPerSecond,
+                                IsStarting = true
+                            });
+                            
+                            return true; // Assume success (server will validate)
+                        }
+                    }
+                }
+                else if (player.Api.Side == EnumAppSide.Server)
+                {
+                    // On server, use API directly
+                    return api.StartStaminaDrain(player, "verticality:" + actionId, amountPerSecond);
+                }
+                
+                return true; // Default to allowing action
+            }
+            catch (Exception ex)
+            {
+                player.Api.Logger.Warning("[Verticality:VigorIntegration] Error starting stamina drain: {0}", ex.ToString());
+                return true; // Allow action if API call fails
+            }
+        }
+        
+        /// <summary>
+        /// Stops a continuous stamina drain for a specific action
+        /// </summary>
+        /// <param name="player">The player</param>
+        /// <param name="actionId">Unique identifier for the action that was causing the drain</param>
+        public static void StopStaminaDrain(EntityPlayer player, string actionId)
+        {
+            var api = VigorIntegrationSystem.GetVigorAPI(player.Api);
+            if (api == null) return; // Do nothing if Vigor not enabled
+            
+            try
+            {
+                // Use direct server network approach instead of API call
+                if (player.Api.Side == EnumAppSide.Client)
+                {
+                    player.Api.Logger.Event("[Verticality:Climb] Sending direct STOP drain request to server for '{0}'", actionId);
+                    
+                    // Get client network channel
+                    var clientApi = player.Api as ICoreClientAPI;
+                    if (clientApi != null)
+                    {
+                        var channel = clientApi.Network.GetChannel("verticality:vigor");
+                        if (channel != null)
+                        {
+                            // Send direct network packet to server
+                            channel.SendPacket(new StaminaDrainPacket {
+                                ActionId = "verticality:" + actionId,
+                                AmountPerSecond = 0, // Not used for stop
+                                IsStarting = false
+                            });
+                            
+                            return; // Done with client side handling
+                        }
+                    }
+                }
+                else if (player.Api.Side == EnumAppSide.Server)
+                {
+                    // On server, use API directly
+                    api.StopStaminaDrain(player, "verticality:" + actionId);
+                }
+            }
+            catch (Exception ex)
+            {
+                player.Api.Logger.Warning("[Verticality:VigorIntegration] Error stopping stamina drain: {0}", ex.ToString());
+            }
+        }
+        
+        /// <summary>
+        /// Checks if the player can perform a stamina-consuming action
+        /// </summary>
+        /// <param name="player">The player</param>
+        /// <returns>True if the player can perform the action (not exhausted)</returns>
+        public static bool CanPerformStaminaAction(EntityPlayer player)
+        {
+            // Check if stamina costs are enabled in config
+            if (!VerticalityModSystem.Config.modConfig.VigorConfig.EnableStaminaCosts)
+            {
+                return true; // Allow action if stamina costs are disabled
+            }
+            
+            var api = VigorIntegrationSystem.GetVigorAPI(player.Api);
+            if (api == null) return true; // Allow action if Vigor not enabled
+            
+            try
+            {
+                return api.CanPerformStaminaAction(player);
+            }
+            catch (Exception ex)
+            {
+                player.Api.Logger.Warning("[Verticality:VigorIntegration] Error checking if player can perform action: {0}", ex.ToString());
                 return true; // Allow action if API call fails
             }
         }
